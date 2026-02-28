@@ -1,0 +1,185 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.1.0)'
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: ros2dev
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: ros2dev-linux-x86_64
+            
+          # Linux aarch64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: ros2dev-linux-aarch64
+            cross: true
+            
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact_name: ros2dev-macos-x86_64
+            
+          # macOS Apple Silicon
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact_name: ros2dev-macos-aarch64
+            
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact_name: ros2dev-windows-x86_64
+            extension: .exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build with cross
+        if: matrix.cross
+        working-directory: ros2dev
+        run: |
+          cross build --release --target ${{ matrix.target }}
+
+      - name: Build with cargo
+        if: ${{ !matrix.cross }}
+        working-directory: ros2dev
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p artifacts
+          cp ros2dev/target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} artifacts/${{ matrix.artifact_name }}
+          chmod +x artifacts/${{ matrix.artifact_name }}
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts
+          Copy-Item "ros2dev/target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}${{ matrix.extension }}" "artifacts/${{ matrix.artifact_name }}${{ matrix.extension }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/*
+          retention-days: 7
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          
+          # Linux x86_64
+          cp artifacts/ros2dev-linux-x86_64/ros2dev-linux-x86_64 release/
+          tar -czvf release/ros2dev-linux-x86_64.tar.gz -C artifacts/ros2dev-linux-x86_64 ros2dev-linux-x86_64
+          
+          # Linux aarch64
+          cp artifacts/ros2dev-linux-aarch64/ros2dev-linux-aarch64 release/
+          tar -czvf release/ros2dev-linux-aarch64.tar.gz -C artifacts/ros2dev-linux-aarch64 ros2dev-linux-aarch64
+          
+          # macOS x86_64
+          cp artifacts/ros2dev-macos-x86_64/ros2dev-macos-x86_64 release/
+          tar -czvf release/ros2dev-macos-x86_64.tar.gz -C artifacts/ros2dev-macos-x86_64 ros2dev-macos-x86_64
+          
+          # macOS aarch64
+          cp artifacts/ros2dev-macos-aarch64/ros2dev-macos-aarch64 release/
+          tar -czvf release/ros2dev-macos-aarch64.tar.gz -C artifacts/ros2dev-macos-aarch64 ros2dev-macos-aarch64
+          
+          # Windows
+          cp artifacts/ros2dev-windows-x86_64/ros2dev-windows-x86_64.exe release/
+          cd artifacts/ros2dev-windows-x86_64 && zip ../../release/ros2dev-windows-x86_64.zip ros2dev-windows-x86_64.exe
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Optional: Build and test on PR
+  ci:
+    name: CI Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check formatting
+        working-directory: ros2dev
+        run: cargo fmt --check
+
+      - name: Run clippy
+        working-directory: ros2dev
+        run: cargo clippy -- -D warnings
+
+      - name: Build
+        working-directory: ros2dev
+        run: cargo build --release
+
+      - name: Run tests
+        working-directory: ros2dev
+        run: cargo test

@@ -1,0 +1,52 @@
+[package]
+name = "ros2dev"
+version = "0.1.0"
+edition = "2021"
+authors = ["Fukuro Strategy Team"]
+description = "ROS 2 Development TUI Tool with Process Management"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+# TUI Framework
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Async Runtime
+tokio = { version = "1.42", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4"] }
+regex = "1.11"
+glob = "0.3"
+walkdir = "2.5"
+whoami = "1.5"
+arboard = "3.4"  # Cross-platform clipboard
+
+# XML parsing for package.xml
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
